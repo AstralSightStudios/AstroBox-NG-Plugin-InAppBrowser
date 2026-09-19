@@ -36,6 +36,14 @@ private final class InvokeResponder: @unchecked Sendable {
     }
 }
 
+// OpenControlledArgs 持有非 Sendable 的 Channel（Tauri iOS API 的 class，无
+// Sendable conformance），整个结构体无法隐式满足 Sendable。与 InvokeResponder
+// 同理包一层 @unchecked Sendable：只在 Task { @MainActor in } 里被消费一次，
+// Channel 也只会由 @MainActor 的 ControlledBrowserSession 使用，无真实竞争。
+private struct OpenControlledRequest: @unchecked Sendable {
+    let args: OpenControlledArgs
+}
+
 class InappbrowserPlugin: Plugin {
     // 取当前最顶层的 ViewController，用于 present/dismiss SFSafariViewController。
     @MainActor
@@ -100,8 +108,9 @@ class InappbrowserPlugin: Plugin {
     @objc public func openControlled(_ invoke: Invoke) throws {
         let args = try invoke.parseArgs(OpenControlledArgs.self)
         let responder = InvokeResponder(invoke)
+        let request = OpenControlledRequest(args: args)
         Task { @MainActor in
-            if let failure = ControlledBrowserRegistry.shared.open(args) {
+            if let failure = ControlledBrowserRegistry.shared.open(request.args) {
                 responder.reject(failure)
             } else {
                 responder.resolve()
@@ -206,6 +215,6 @@ class InappbrowserPlugin: Plugin {
 }
 
 @_cdecl("init_plugin_inappbrowser")
-func initPluginInappbrowser() -> Plugin {
+public func initPluginInappbrowser() -> Plugin {
     return InappbrowserPlugin()
 }
