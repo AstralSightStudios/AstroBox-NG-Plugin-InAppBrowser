@@ -24,6 +24,16 @@ private final class InvokeResponder: @unchecked Sendable {
     func reject(_ message: String) {
         invoke.reject(message)
     }
+
+    @MainActor
+    func resolveValue(_ value: String) {
+        invoke.resolve(["value": value] as JsonObject)
+    }
+
+    @MainActor
+    func resolveCookies(_ cookies: [JsonObject]) {
+        invoke.resolve(["cookies": cookies] as JsonObject)
+    }
 }
 
 class InappbrowserPlugin: Plugin {
@@ -80,6 +90,118 @@ class InappbrowserPlugin: Plugin {
             }
             responder.resolve()
         }
+    }
+
+    // MARK: - 可控浏览器（WKWebView）
+    //
+    // 上面的 open/close 是 SFSafariViewController，拦不到导航也读不到 cookie，
+    // 只够 App 自己登录用。插件要复刻第三方登录走下面这组，实现见 ControlledBrowser.swift。
+
+    @objc public func openControlled(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(OpenControlledArgs.self)
+        let responder = InvokeResponder(invoke)
+        Task { @MainActor in
+            if let failure = ControlledBrowserRegistry.shared.open(args) {
+                responder.reject(failure)
+            } else {
+                responder.resolve()
+            }
+        }
+    }
+
+    @objc public func navigateControlled(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(NavigateArgs.self)
+        let responder = InvokeResponder(invoke)
+        Task { @MainActor in
+            guard let session = ControlledBrowserRegistry.shared.session(args.id) else {
+                responder.reject("browser_not_found")
+                return
+            }
+            guard let url = URL(string: args.url) else {
+                responder.reject("invalid_url")
+                return
+            }
+            session.webView.load(URLRequest(url: url))
+            responder.resolve()
+        }
+    }
+
+    @objc public func evalControlled(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(EvalArgs.self)
+        let responder = InvokeResponder(invoke)
+        Task { @MainActor in
+            guard let session = ControlledBrowserRegistry.shared.session(args.id) else {
+                responder.reject("browser_not_found")
+                return
+            }
+            session.webView.evaluateJavaScript(args.script) { value, error in
+                Task { @MainActor in
+                    if let error {
+                        responder.reject(error.localizedDescription)
+                        return
+                    }
+                    // 统一回 JSON 文本，与桌面端 eval_with_callback 的语义对齐。
+                    responder.resolveValue(InappbrowserPlugin.serializeJs(value))
+                }
+            }
+        }
+    }
+
+    @objc public func getCookies(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(CookiesArgs.self)
+        let responder = InvokeResponder(invoke)
+        Task { @MainActor in
+            guard let session = ControlledBrowserRegistry.shared.session(args.id) else {
+                responder.reject("browser_not_found")
+                return
+            }
+            let host = URL(string: args.url)?.host
+            session.webView.configuration.websiteDataStore.httpCookieStore.getAllCookies {
+                cookies in
+                Task { @MainActor in
+                    let filtered = cookies.filter { cookie in
+                        guard let host else { return true }
+                        // domain 常带前导点，按后缀匹配。
+                        let domain =
+                            cookie.domain.hasPrefix(".")
+                            ? String(cookie.domain.dropFirst()) : cookie.domain
+                        return host == domain || host.hasSuffix("." + domain)
+                    }
+                    .map { cookie in
+                        [
+                            "name": cookie.name,
+                            "value": cookie.value,
+                            "domain": cookie.domain,
+                            "path": cookie.path,
+                        ] as JsonObject
+                    }
+                    responder.resolveCookies(filtered)
+                }
+            }
+        }
+    }
+
+    @objc public func closeControlled(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(BrowserIdArgs.self)
+        let responder = InvokeResponder(invoke)
+        Task { @MainActor in
+            ControlledBrowserRegistry.shared.dismiss(id: args.id)
+            responder.resolve()
+        }
+    }
+
+    /// 把 evaluateJavaScript 的返回值序列化成 JSON 文本。
+    @MainActor
+    static func serializeJs(_ value: Any?) -> String {
+        guard let value, !(value is NSNull) else { return "" }
+        // 顶层标量不是合法 JSON 根，包一层数组再把括号去掉。
+        if JSONSerialization.isValidJSONObject([value]),
+            let data = try? JSONSerialization.data(withJSONObject: [value]),
+            let text = String(data: data, encoding: .utf8)
+        {
+            return String(text.dropFirst().dropLast())
+        }
+        return "\(value)"
     }
 }
 

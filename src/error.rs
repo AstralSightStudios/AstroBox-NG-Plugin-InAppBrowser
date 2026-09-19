@@ -1,4 +1,4 @@
-use serde::{ser::Serializer, Serialize};
+use serde::{Serialize, ser::Serializer};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -6,11 +6,17 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum Error {
     #[error(transparent)]
     Io(#[from] std::io::Error),
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     #[error(transparent)]
     PluginInvoke(#[from] tauri::plugin::mobile::PluginInvokeError),
     #[error("in-app browser is not supported on this platform")]
     UnsupportedPlatform,
+    #[error("invalid url")]
+    InvalidUrl,
+    #[error("in-app browser {0} not found")]
+    BrowserNotFound(u32),
+    #[error("in-app browser error: {0}")]
+    Browser(String),
 }
 
 impl Serialize for Error {

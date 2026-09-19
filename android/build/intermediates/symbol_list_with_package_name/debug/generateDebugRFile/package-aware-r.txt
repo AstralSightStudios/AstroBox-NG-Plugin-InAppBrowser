@@ -1,0 +1,1 @@
+moe.astralsight.astrobox.plugin.inappbrowser
