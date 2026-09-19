@@ -13,7 +13,8 @@ import WebKit
 //
 // 前缀匹配必须放在原生侧：导航决策要求同步返回放行/取消，来不及回 Rust 问一趟。
 
-struct OpenControlledArgs: Decodable {
+// Channel 不是 Sendable，但只在 MainActor 上使用；这里声明为 unchecked 以便跨入 MainActor 任务。
+struct OpenControlledArgs: Decodable, @unchecked Sendable {
     let id: Int
     let url: String
     let title: String?
@@ -92,7 +93,7 @@ final class ControlledBrowserSession: NSObject, WKNavigationDelegate {
     func webView(
         _ webView: WKWebView,
         decidePolicyFor navigationAction: WKNavigationAction,
-        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void
     ) {
         let url = navigationAction.request.url?.absoluteString ?? ""
 
