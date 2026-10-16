@@ -17,3 +17,6 @@ ios/.build
 
 dist-js
 dist
+
+# Gradle 构建产物
+android/build/
