@@ -26,6 +26,7 @@ let package = Package(
             path: "Sources",
             linkerSettings: [
                 .linkedFramework("SafariServices"),
+                .linkedFramework("WebKit"),
                 .linkedFramework("UIKit"),
                 .linkedFramework("Foundation")
             ]
